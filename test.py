@@ -371,3 +371,43 @@ else:
 
 sentences_list = ConvertWord2Idx(t, vocab)
 data_batch = Build_Batch(sentences_list, opt.batch_size, sorted_by_len=False)
+
+
+class Atten(nn.Module):
+    def __init__(self, hidden_size):
+        super(Atten, self).__init__()
+        self.atten = nn.Linear(hidden_size, 1)
+
+    def foward(self, x):
+        """
+        x: [batch, sen_max_len, embed_dim]
+        """
+        m = torch.tanh(x)  # [batch, sen_max_len, hidden_size]
+        m = self.atten(m).squeeze(2)  # [batch, sen_max_len]
+        alpha = nn.functional.softmax(m, dim=1).unsqueeze()     # [batch, 1, sen_max_len]
+        return alpha
+
+
+class AttenBiLSTM(nn.Module):
+    def __init__(self, vocab_size, embed_dim, hidden_size, pretrain_embed, num_layers, class_num):
+        super(AttenBiLSTM, self).__init__()
+
+        self.hidden_size = hidden_size
+        self.embedding = nn.Embedding(vocab_size, embed_dim).from_pretrained(pretrain_embed, freeze=False)
+        self.BiLSTM = nn.LSTM(embed_dim, hidden_size, num_layers, bidirectional=True, batch_first=True)
+        self.atten = Atten(hidden_size)
+        self.fc = nn.Linear(hidden_size, class_num)
+
+    def forward(self, x):
+        """
+        x: [batch_size, max_len]
+        """
+        x = self.embedding(x)       # [batch_size, sen_max_len, embed_dim]
+        h, _ = self.BiLSTM(x)       # [batch_size, sen_max_len, num_directions * hidden_size]
+        h = h[:, :, :self.hidden_size] + h[:, :, self.hidden_size:]  # [batch, sen_max_len, hidden_size]
+        alpha = self.atten(h)       # [batch, 1, sen_max_len]
+        r = alpha.bmm(h, alpha)     # [batch, 1, hidden_size]
+        r = r.squeeze(1)            # [batch, hidden_size]
+        h = torch.tanh(r)           # [batch, hidden_size]
+        logits = self.fc(h)         # [batch, class_num]
+        return logits
